@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Lambda function to identify and delete unattached EBS volumes in the 'Available' state.
+
+Resources:
+  # IAM Role for Lambda Execution
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVolumes
+                  - ec2:DeleteVolume
+                Resource: '*'
+
+  # Lambda Function to Delete Unattached EBS Volumes
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import boto3
+
+          def lambda_handler(event, context):
+              ec2 = boto3.client('ec2')
+              
+              # Describe volumes with the state 'Available'
+              try:
+                  response = ec2.describe_volumes(Filters=[
+                      {'Name': 'status', 'Values': ['available']}  # Filter by system-defined state
+                  ])
+                  print(f"Describe Volumes Response: {response}")  # Log the response for debugging
+              except Exception as e:
+                  print(f"Error describing volumes: {str(e)}")
+                  return
+              
+              # Check if any volumes are found
+              if not response['Volumes']:
+                  print("No unattached EBS volumes in the 'Available' state found.")
+                  return  # Exit without doing anything
+              
+              for volume in response['Volumes']:
+                  volume_id = volume['VolumeId']
+                  
+                  # Delete the volume
+                  try:
+                      print(f"Deleting volume in 'Available' state: {volume_id}")
+                      ec2.delete_volume(VolumeId=volume_id)
+                      print(f"Successfully deleted volume: {volume_id}")
+                  except Exception as e:
+                      print(f"Failed to delete volume {volume_id}: {str(e)}")
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.11
+      Timeout: 60
+      MemorySize: 128
+
+  # EventBridge Rule to Trigger Lambda Function
+  CleanupScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: cron(0 11 ? * 6 *)  # Runs every Friday at 13:00 CEST (11:00 UTC)
+      Targets:
+        - Arn: !GetAtt LambdaFunction.Arn
+          Id: LambdaTarget
+      State: ENABLED
+
+  # Grant EventBridge Permission to Invoke Lambda
+  LambdaPermissionForEventBridge:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CleanupScheduleRule.Arn
