@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Lambda function to identify and delete unattached EBS volumes in the 'Available' state.
+Description: Using Lambda function to find and remove unattached EBS volumes in the 'Available' state.
 
 Resources:
-  # IAM Role for Lambda Execution
+  # THIS IS THE IAM Role for Lambda Execution
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -76,7 +76,7 @@ Resources:
   CleanupScheduleRule:
     Type: AWS::Events::Rule
     Properties:
-      ScheduleExpression: cron(0 11 ? * 6 *)  # Runs every Friday at 13:00 CEST (11:00 UTC)
+      ScheduleExpression: cron(0 11 L * ? *)  # Runs at 11:00 UTC on the last day of each month
       Targets:
         - Arn: !GetAtt LambdaFunction.Arn
           Id: LambdaTarget
